@@ -1,0 +1,95 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rendercv/rendercv/refs/tags/v2.5/schema.json
+cv:
+  name: John Doe
+  headline:
+  location: San Francisco, CA
+  email: john.doe@email.com
+  photo:
+  phone:
+  website: https://rendercv.com/
+  social_networks:
+    - network: LinkedIn
+      username: rendercv
+    - network: GitHub
+      username: rendercv
+  custom_connections:
+  sections:
+    Welcome to RenderCV:
+      - RenderCV reads a CV written in a YAML file, and generates a PDF with professional typography.
+      - See the [documentation](https://docs.rendercv.com) for more details.
+    education:
+      - institution: Princeton University
+        area: Computer Science
+        degree: PhD
+        date:
+        start_date: 2018-09
+        end_date: 2023-05
+        location: Princeton, NJ
+        summary:
+        highlights:
+          - 'Thesis: Efficient Neural Architecture Search for Resource-Constrained Deployment'
+          - 'Advisor: Prof. Sanjeev Arora'
+          - NSF Graduate Research Fellowship, Siebel Scholar (Class of 2022)
+      - institution: Boğaziçi University
+        area: Computer Engineering
+        degree: BS
+        date:
+        start_date: 2014-09
+        end_date: 2018-06
+        location: Istanbul, Türkiye
+        summary:
+        highlights:
+          - 'GPA: 3.97/4.00, Valedictorian'
+          - Fulbright Scholarship recipient for graduate studies
+    experience:
+      - company: Nexus AI
+        position: Co-Founder & CTO
+        date:
+        start_date: 2023-06
+        end_date: present
+        location: San Francisco, CA
+        summary:
+        highlights:
+          - Built foundation model infrastructure serving 2M+ monthly API requests with 99.97% uptime
+          - Raised $18M Series A led by Sequoia Capital, with participation from a16z and Founders Fund
+          - Scaled engineering team from 3 to 28 across ML research, platform, and applied AI divisions
+          - Developed proprietary inference optimization reducing latency by 73% compared to baseline
+      - company: NVIDIA Research
+        position: Research Intern
+        date:
+        start_date: 2022-05
+        end_date: 2022-08
+        location: Santa Clara, CA
+        summary:
+        highlights:
+          - Designed sparse attention mechanism reducing transformer memory footprint by 4.2x
+          - Co-authored paper accepted at NeurIPS 2022 (spotlight presentation, top 5% of submissions)
+    skills:
+      - label: Languages
+        details: Python, C++, CUDA, Rust, Julia
+      - label: ML Frameworks
+        details: PyTorch, JAX, TensorFlow, Triton, ONNX
+      - label: Infrastructure
+        details: Kubernetes, Ray, distributed training, AWS, GCP
+      - label: Research Areas
+        details: Neural architecture search, model compression, efficient inference, multi-agent RL
+design:
+  theme: classic
+locale:
+  language: english
+settings:
+  current_date: '2025-01-25'
+  render_command:
+    design:
+    locale:
+    typst_path: rendercv_output/NAME_IN_SNAKE_CASE_CV.typ
+    pdf_path: rendercv_output/NAME_IN_SNAKE_CASE_CV.pdf
+    markdown_path: rendercv_output/NAME_IN_SNAKE_CASE_CV.md
+    html_path: rendercv_output/NAME_IN_SNAKE_CASE_CV.html
+    png_path: rendercv_output/NAME_IN_SNAKE_CASE_CV.png
+    dont_generate_markdown: false
+    dont_generate_html: false
+    dont_generate_typst: false
+    dont_generate_pdf: false
+    dont_generate_png: false
+  bold_keywords: []
