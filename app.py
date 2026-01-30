@@ -25,6 +25,7 @@ from src.pdf_renderer import PDFRenderer
 from src.database import CVDatabase
 from src.ai_backend import GeminiClient
 from src.prompts import PromptManager
+from src.ai_proxy import InterviewProxy
 
 # Configuración de la página
 st.set_page_config(
@@ -117,7 +118,7 @@ st.markdown(
 )
 
 # NUEVO: Barra de progreso global
-steps_names = ["📝 Inputs", "🔍 Análisis", "💬 Preguntas", "✅ Resultado"]
+steps_names = ["📝 Inputs", "🔍 Análisis", "💬 Preguntas", "✅ Resultado", "🤖 Asistente"]
 current_step_name = steps_names[st.session_state.current_step]
 progress_value = (st.session_state.current_step + 1) / len(steps_names)
 
@@ -125,7 +126,7 @@ progress_value = (st.session_state.current_step + 1) / len(steps_names)
 st.progress(progress_value)
 
 # Mostrar paso actual con emojis de completado
-progress_cols = st.columns(4)
+progress_cols = st.columns(len(steps_names))
 for idx, step_name in enumerate(steps_names):
     with progress_cols[idx]:
         if idx < st.session_state.current_step:
@@ -139,6 +140,16 @@ st.divider()
 
 # Sidebar con historial
 with st.sidebar:
+    st.header("Navegación Rápida")
+    if st.button("🤖 Asistente de Entrevista", type="primary", use_container_width=True):
+        st.session_state.current_step = 4
+        st.rerun()
+    if st.button("📝 Inicio / Cargar CV", use_container_width=True):
+        st.session_state.current_step = 0
+        st.rerun()
+        
+    st.divider()
+
     st.header("📚 Historial de CVs")
     
     # Inicializar DB
@@ -1160,10 +1171,154 @@ elif st.session_state.current_step == 3:
             
             col_center = st.columns([1, 2, 1])[1]
             with col_center:
+                if st.button("🤖 Continuar al Asistente de Entrevista", type="primary", use_container_width=True):
+                    st.session_state.current_step = 4
+                    st.rerun()
+
                 if st.button("🔄 Generar Otro CV (Reiniciar)", type="secondary", use_container_width=True):
                     for key in list(st.session_state.keys()):
                         del st.session_state[key]
                     st.rerun()
+
+# TAB 5: ASISTENTE DE ENTREVISTA
+elif st.session_state.current_step == 4:
+    st.header("🤖 Asistente de Entrevista con IA")
+    
+    st.info("Utiliza este asistente para responder preguntas de postulación o simular una entrevista. La IA responderá como TÚ, usando tu CV y experiencias confirmadas.")
+
+    if not st.session_state.cv_text:
+        st.warning("⚠️ No hay contexto de CV cargado. Necesitamos tu CV para que el asistente funcione.")
+        
+        col_up1, col_up2 = st.columns(2)
+        with col_up1:
+            if st.button("📝 Ir al Inicio para cargar CV"):
+                st.session_state.current_step = 0
+                st.rerun()
+        
+        # Opción rápida de carga ahí mismo (Opcional, pero mejora UX)
+        st.divider()
+        st.subheader("O carga rápida de contexto:")
+        uploaded_file_quick = st.file_uploader("Sube tu CV (PDF) rápidamente:", type=["pdf"], key="quick_uploader")
+        if uploaded_file_quick:
+             with st.spinner("Procesando..."):
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                        tmp_file.write(uploaded_file_quick.getvalue())
+                        tmp_path = tmp_file.name
+                    parser = CVParser()
+                    cv_data = parser.parse_pdf(tmp_path)
+                    st.session_state.cv_text = cv_data.raw_text
+                    Path(tmp_path).unlink()
+                    st.success("✅ CV cargado. Ya puedes usar el asistente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    else:
+        # Verificar si hay descripción de vacante
+        if not st.session_state.job_description:
+            st.warning("⚠️ No hay descripción de vacante cargada. El asistente necesita saber a qué estás postulando.")
+            
+            st.session_state.job_description = st.text_area(
+                "Ingresa la descripción de la vacante / empresa:",
+                placeholder="Senior Python Developer at Google...",
+                height=150
+            )
+            
+            if not st.session_state.job_description:
+                st.info("Por favor ingresa la descripción para habilitar el asistente.")
+                st.stop()
+        else:
+            with st.expander("👀 Ver Vacante / Contexto Actual", expanded=False):
+                new_desc = st.text_area("Editar Vacante:", value=st.session_state.job_description, height=150)
+                if new_desc != st.session_state.job_description:
+                    st.session_state.job_description = new_desc
+                    st.toast("Contexto de vacante actualizado")
+
+        col_main, col_hist = st.columns([2, 1])
+
+        with col_main:
+            st.subheader("Simulador de Respuesta")
+            
+            # Input de pregunta
+            question_input = st.text_area(
+                "Pregunta de la Entrevista / Formulario:",
+                placeholder="Ej: ¿Por qué crees que eres el candidato ideal para este puesto?",
+                height=100
+            )
+
+            # Selección de Tono
+            tone_options = ["Profesional", "Entusiasta", "Conciso", "Técnico", "Persuasivo"]
+            selected_tone = st.select_slider("Tono de la respuesta:", options=tone_options, value="Profesional")
+
+            if st.button("✨ Generar Respuesta", type="primary", use_container_width=True):
+                if not question_input.strip():
+                    st.error("Por favor escribe una pregunta.")
+                else:
+                    with st.spinner("🧠 Pensando como tú..."):
+                        try:
+                            # Inicializar componentes
+                            gemini_client = GeminiClient()
+                            db = CVDatabase()
+                            proxy = InterviewProxy(gemini_client, db)
+                            
+                            # Generar respuesta
+                            answer = proxy.answer_question(
+                                question=question_input,
+                                cv_text=st.session_state.cv_text,
+                                job_description=st.session_state.job_description,
+                                tone=selected_tone
+                            )
+                            
+                            # Mostrar respuesta
+                            st.session_state.last_generated_answer = answer
+                            st.session_state.last_question = question_input
+                            
+                            # Guardar en historial DB
+                            # Asumimos que el CV actual generado es el último en historial si existe
+                            # O podríamos pasar None si no hay asociación directa aún
+                            # Para simplificar, guardamos sin link a CV específico por ahora o buscamos el último
+                            try:
+                                # Intento simple de obtener ID del último CV generado en esta sesión
+                                # Esto requeriría haber guardado el ID en session_state en el Tab 4
+                                # Como no lo tenemos a mano, pasamos None
+                                db.save_interview_session(None, question_input, answer)
+                            except Exception as db_e:
+                                logger.error(f"No se pudo guardar sesión en DB: {db_e}")
+
+                        except Exception as e:
+                            st.error(f"Error generando respuesta: {e}")
+
+            # Mostrar resultado si existe
+            if "last_generated_answer" in st.session_state:
+                st.divider()
+                st.subheader("Respuesta Sugerida:")
+                st.info(f"**Pregunta:** {st.session_state.last_question}")
+                
+                st.text_area("Copia tu respuesta:", value=st.session_state.last_generated_answer, height=250)
+                
+                # Feedback visual
+                st.success("✅ Respuesta generada basada en tu perfil real.")
+
+        with col_hist:
+            st.subheader("📚 Historial Reciente")
+            try:
+                db = CVDatabase()
+                sessions = db.get_interview_sessions(limit=10)
+                if not sessions:
+                    st.caption("No hay preguntas recientes.")
+                
+                for s in sessions:
+                    with st.expander(f"❓ {s['question'][:40]}..."):
+                        st.write(s['generated_answer'])
+                        st.caption(f"📅 {s['created_at']}")
+            except Exception as e:
+                st.error("Error cargando historial.")
+
+        st.divider()
+        if st.button("🔄 Generar Otro CV (Reiniciar)", type="secondary"):
+             for key in list(st.session_state.keys()):
+                del st.session_state[key]
+             st.rerun()
 
 # Footer
 st.divider()

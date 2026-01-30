@@ -600,8 +600,56 @@ INSTRUCCIONES CRÍTICAS PARA CVs EN ESPAÑOL:
 """
 
 
+    # 7. Generación de Respuesta de Entrevista (AI Proxy)
+    INTERVIEW_ANSWER_GENERATION = """Eres {user_name}, un profesional postulando a un cargo. Tu tarea es responder una pregunta de entrevista en primera persona ("yo"), basándote estrictamente en tu perfil real.
+
+**TU PERFIL PROFESIONAL (CV):**
+{cv_context}
+
+**TUS EXPERIENCIAS CONFIRMADAS (DETALLES ESPECÍFICOS):**
+{skill_memory_context}
+
+**VACANTE A LA QUE APLICAS:**
+{job_description}
+
+**TONO DE RESPUESTA:** {tone}
+
+**PREGUNTA DE ENTREVISTA:**
+"{question}"
+
+**DIRECTRICES DE RESPUESTA:**
+1. Responde en primera persona ("Yo tengo experiencia en...", "En mi rol anterior...").
+2. Sé honesto: Solo menciona habilidades y experiencias que aparecen en tu Perfil o Experiencias Confirmadas.
+3. Si la pregunta requiere una habilidad que NO tienes: Admite la falta de experiencia directa pero muestra disposición a aprender o menciona habilidades transferibles relacionadas. NO inventes experiencia.
+4. Conecta tu experiencia con los requisitos de la vacante siempre que sea posible.
+5. Usa el tono solicitado ({tone}).
+6. Sé conciso y directo (aprox. 150-200 palabras máximo, a menos que la pregunta pida más detalle).
+
+**Respuesta:**
+"""
+
+
 class PromptManager:
     """Gestor para construir prompts con validación de variables."""
+
+    @staticmethod
+    def get_interview_answer_prompt(
+        user_name: str,
+        cv_context: str,
+        skill_memory_context: str,
+        job_description: str,
+        question: str,
+        tone: str = "Profesional"
+    ) -> str:
+        """Construye el prompt para el asistente de entrevista."""
+        return PromptTemplates.INTERVIEW_ANSWER_GENERATION.format(
+            user_name=user_name,
+            cv_context=cv_context,
+            skill_memory_context=skill_memory_context,
+            job_description=job_description,
+            question=question,
+            tone=tone
+        )
 
     @staticmethod
     def get_job_analysis_prompt(job_description: str) -> str:

@@ -62,6 +62,17 @@ class CVDatabase:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS interview_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cv_id INTEGER,
+                    question TEXT NOT NULL,
+                    generated_answer TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(cv_id) REFERENCES cv_history(id) ON DELETE CASCADE
+                )
+            """)
             
             conn.commit()
             conn.close()
@@ -270,6 +281,27 @@ class CVDatabase:
             logger.error(f"Error recuperando skill answer: {e}", exc_info=True)
             return None
 
+    def get_all_skill_answers(self) -> dict[str, str]:
+        """
+        Recupera todas las respuestas de habilidades almacenadas.
+        
+        Returns:
+            Diccionario {skill_name: answer_text}
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT skill_name, answer_text FROM skill_memory")
+            rows = cursor.fetchall()
+            
+            conn.close()
+            
+            return {row[0]: row[1] for row in rows}
+        except Exception as e:
+            logger.error(f"Error recuperando todas las skill answers: {e}", exc_info=True)
+            return {}
+
     def save_base_cv(self, cv_text: str) -> None:
         """
         Guarda o actualiza el CV base predeterminado (Singleton record).
@@ -319,3 +351,65 @@ class CVDatabase:
         except Exception as e:
             logger.error(f"Error recuperando CV Base: {e}", exc_info=True)
             return None
+
+    def save_interview_session(self, cv_id: int | None, question: str, answer: str) -> int:
+        """
+        Guarda una sesión de pregunta/respuesta de entrevista.
+        
+        Args:
+            cv_id: ID del CV generado asociado (puede ser None si es sesión libre)
+            question: Pregunta realizada
+            answer: Respuesta generada
+            
+        Returns:
+            ID del registro creado
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO interview_sessions (cv_id, question, generated_answer)
+                VALUES (?, ?, ?)
+            """, (cv_id, question, answer))
+            
+            session_id = cursor.lastrowid if cursor.lastrowid is not None else 0
+            conn.commit()
+            conn.close()
+            
+            return session_id
+        except Exception as e:
+            logger.error(f"Error guardando sesión de entrevista: {e}", exc_info=True)
+            raise
+
+    def get_interview_sessions(self, cv_id: int | None = None, limit: int = 50) -> list[dict]:
+        """
+        Recupera historial de entrevistas.
+        
+        Args:
+            cv_id: Filtrar por ID de CV (opcional)
+            limit: Límite de resultados
+            
+        Returns:
+            Lista de sesiones
+        """
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        if cv_id:
+            cursor.execute("""
+                SELECT * FROM interview_sessions 
+                WHERE cv_id = ? 
+                ORDER BY created_at DESC LIMIT ?
+            """, (cv_id, limit))
+        else:
+             cursor.execute("""
+                SELECT * FROM interview_sessions 
+                ORDER BY created_at DESC LIMIT ?
+            """, (limit,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
