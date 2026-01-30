@@ -7,6 +7,7 @@ import tempfile
 import time
 from pathlib import Path
 import os
+import concurrent.futures
 
 from src.logger import get_logger
 
@@ -36,6 +37,16 @@ st.set_page_config(
 # Inicializar session_state
 if "cv_text" not in st.session_state:
     st.session_state.cv_text = ""
+    # Intentar cargar CV Base por defecto
+    try:
+        db = CVDatabase()
+        base_cv = db.get_base_cv()
+        if base_cv:
+            st.session_state.cv_text = base_cv
+            st.toast("ℹ️ Tu CV Base ha sido cargado automáticamente")
+    except Exception as e:
+        logger.error(f"Error cargando CV base: {e}")
+
 if "job_description" not in st.session_state:
     st.session_state.job_description = ""
 if "selected_language" not in st.session_state:
@@ -56,6 +67,8 @@ if "user_answers" not in st.session_state:
     st.session_state.user_answers = {}
 if "questions_completed" not in st.session_state:
     st.session_state.questions_completed = False
+if "prefilled_answers" not in st.session_state:
+    st.session_state.prefilled_answers = {}
 if "yaml_generated" not in st.session_state:
     st.session_state.yaml_generated = None
 if "pdf_path" not in st.session_state:
@@ -236,6 +249,20 @@ if st.session_state.current_step == 0:
             if st.session_state.cv_text:
                 word_count = len(st.session_state.cv_text.split())
                 st.caption(f"📊 {word_count} palabras | {len(st.session_state.cv_text)} caracteres")
+            
+            # Botón para guardar como CV Base
+            if st.button("💾 Guardar como mi CV Base", help="Guarda este texto como tu CV predeterminado para futuras sesiones"):
+                if len(st.session_state.cv_text.strip()) > 50:
+                    try:
+                        db = CVDatabase()
+                        db.save_base_cv(st.session_state.cv_text)
+                        st.success("✅ CV Base actualizado correctamente")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error guardando CV base: {e}")
+                else:
+                    st.warning("⚠️ El texto es muy corto para guardarlo como base")
         else:
             uploaded_file = st.file_uploader(
                 "Sube tu CV en PDF",
@@ -283,6 +310,19 @@ if st.session_state.current_step == 0:
                             height=200,
                             disabled=True
                         )
+                    
+                    # Botón para guardar como CV Base (versión PDF)
+                    if st.button("💾 Guardar como mi CV Base", key="save_base_cv_pdf", help="Guarda este texto como tu CV predeterminado para futuras sesiones"):
+                        if len(st.session_state.cv_text.strip()) > 50:
+                            try:
+                                db = CVDatabase()
+                                db.save_base_cv(st.session_state.cv_text)
+                                st.success("✅ CV Base actualizado correctamente")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error guardando CV base: {e}")
+
     
     with col2:
         st.subheader("Descripción de la Vacante")
@@ -355,13 +395,12 @@ if st.session_state.current_step == 0:
     
     if validation_errors:
         st.warning(f"⚠️ **Para continuar, completa:** {', '.join(validation_errors)}")
-        st.button("Continuar (Deshabilitado)", disabled=True)
+        st.button("🚀 Comenzar Análisis (Deshabilitado)", disabled=True)
     else:
-        st.success("✅ Inputs válidos. Preparando análisis...")
-        # Auto-avance
-        import time
-        with st.spinner("Avanzando al análisis..."):
-            time.sleep(1)
+        st.success("✅ Inputs válidos. Configura tu idioma y tema, luego inicia el análisis.")
+        
+        # Botón manual para avanzar
+        if st.button("🚀 Comenzar Análisis", type="primary", use_container_width=True):
             st.session_state.current_step = 1
             st.rerun()
 
@@ -556,18 +595,22 @@ elif st.session_state.current_step == 1:
                     for rec in recommendations['nice_to_have']:
                         st.info(rec)
         
-        # AUTO-AVANCE AUTOMÁTICO
+        # AVANCE MANUAL
         st.divider()
-        st.success("✅ Análisis presentado. Avanzando a Preguntas...")
-        with st.spinner("Preparando entrevista..."):
-            time.sleep(3) # Pausa suficiente para leer los resultados principales
-            st.session_state.current_step = 2
-            st.rerun()
-
-        # Botón para re-analizar (manual override)
-        if st.button("🔄 Re-analizar (Reiniciar análisis)", type="secondary"):
-            st.session_state.gap_analysis_done = False
-            st.rerun()
+        
+        col_nav_1, col_nav_2 = st.columns([1, 3])
+        
+        with col_nav_1:
+             # Botón para re-analizar (manual override)
+            if st.button("🔄 Re-analizar", type="secondary", use_container_width=True):
+                st.session_state.gap_analysis_done = False
+                st.rerun()
+                
+        with col_nav_2:
+            st.success("✅ Análisis completado. Revisa los resultados arriba.")
+            if st.button("💬 Continuar a la Entrevista", type="primary", use_container_width=True):
+                st.session_state.current_step = 2
+                st.rerun()
 
 # TAB 3: PREGUNTAS
 elif st.session_state.current_step == 2:
@@ -610,6 +653,17 @@ elif st.session_state.current_step == 2:
                     )
                     
                     st.session_state.generated_questions = questions
+                    
+                    # NUEVO: Verificar memoria de habilidades
+                    db = CVDatabase()
+                    prefilled = {}
+                    for q in questions:
+                        skill_name = q.gap.skill_name
+                        stored_answer = db.get_skill_answer(skill_name)
+                        if stored_answer:
+                            prefilled[skill_name] = stored_answer
+                    
+                    st.session_state.prefilled_answers = prefilled
                     
                     # Iniciar conversación
                     if questions:
@@ -660,8 +714,17 @@ elif st.session_state.current_step == 2:
                 
                 # Usar form para enviar con Enter
                 with st.form(key=f"question_form_{idx}"):
+                    # Verificar si hay respuesta pre-cargada
+                    skill_name_current = current_q.gap.skill_name
+                    default_answer = st.session_state.prefilled_answers.get(skill_name_current, "")
+                    
+                    label_text = "Tu respuesta:"
+                    if default_answer:
+                        label_text = "💡 Respuesta recuperada de tu historial (puedes editarla):"
+                    
                     user_response = st.text_area(
-                        "Tu respuesta:",
+                        label_text,
+                        value=default_answer,
                         height=100,
                         placeholder="Ej: Sí, he usado esta tecnología en el proyecto X para..."
                     )
@@ -679,6 +742,13 @@ elif st.session_state.current_step == 2:
                         # Guardar en diccionario de respuestas
                         skill_name = current_q.gap.skill_name
                         st.session_state.user_answers[skill_name] = answer_text
+                        
+                        # NUEVO: Guardar en memoria persistente si es una respuesta válida (no skip vacío o negativa default)
+                        # Nota: Si el usuario confirma "No tengo experiencia", también podríamos querer guardarlo para no preguntar de nuevo?
+                        # Por ahora guardamos todo lo que el usuario envía explícitamente.
+                        if submit and user_response:
+                             db = CVDatabase()
+                             db.save_skill_answer(skill_name, answer_text)
                         
                         # Agregar a historial
                         st.session_state.conversation_history.append({
@@ -731,6 +801,18 @@ elif st.session_state.current_step == 3:
         st.session_state.current_step = 2
         st.rerun()
     else:
+        # Botón para refinar respuestas (Feature US-022)
+        with st.expander("🛠️ Opciones de Edición", expanded=True):
+            st.info("¿Algo no quedó bien? Puedes volver a las preguntas para ajustar tus respuestas.")
+            if st.button("✏️ Actualizar preguntas / Refinar respuestas", type="secondary", use_container_width=True):
+                # Resetear estado para permitir edición
+                st.session_state.questions_completed = False
+                st.session_state.current_step = 2
+                st.session_state.current_question_index = 0
+                # NOTA: No borramos user_answers para que sirvan de pre-llenado
+                st.session_state.yaml_generated = None # Forzar regeneración
+                st.rerun()
+
         if not st.session_state.yaml_generated:
             # AUTO-GENERACIÓN
             try:
@@ -768,7 +850,7 @@ elif st.session_state.current_step == 3:
                     structured_data = json.loads(json_str)
                     logger.info(f"Datos estructurados: {len(structured_data.get('experience', []))} experiencias encontradas")
                 
-                # 2. Clasificar y Procesar Respuestas del Usuario
+                # 2. Clasificar y Procesar Respuestas del Usuario (OPTIMIZADO CON BATCHING Y PARALELISMO)
                 gap_result = st.session_state.gap_analysis_result["gap_analysis"]
                 user_answers = st.session_state.user_answers
                 
@@ -777,244 +859,214 @@ elif st.session_state.current_step == 3:
                 projects_to_create = []  # Para crear sección de proyectos
                 
                 if user_answers:
-                    with st.spinner("🔍 Clasificando tus respuestas..."):
-                        logger.info("Clasificando respuestas del usuario...")
+                    with st.spinner("🔍 Clasificando tus respuestas (Optimizado)..."):
+                        logger.info("Clasificando respuestas del usuario en batch...")
                         
                         # Obtener nombres de empresas conocidas del CV
                         known_companies = [exp.get("company", "") for exp in structured_data.get("experience", [])]
                         
-                        # Clasificar cada respuesta
-                        for skill_name, user_answer in user_answers.items():
-                            # Skip si no tiene experiencia
-                            if "no tengo experiencia" in user_answer.lower():
-                                continue
-                            
-                            # Llamar al clasificador
-                            classifier_prompt = PromptManager.get_user_response_classifier_prompt(
-                                skill_name=skill_name,
-                                user_answer=user_answer,
-                                known_companies=known_companies
-                            )
-                            
-                            classifier_response = gemini_client.generate(classifier_prompt)
-                            classifier_text = classifier_response.text.strip()
-                            
-                            # Limpiar JSON
-                            if "```json" in classifier_text:
-                                classifier_text = classifier_text.split("```json")[1].split("```")[0].strip()
-                            elif "```" in classifier_text:
-                                classifier_text = classifier_text.split("```")[1].split("```")[0].strip()
-                            
+                        # Preparar lista de respuestas válidas para el prompt
+                        answers_list = []
+                        for skill, answer in user_answers.items():
+                            if "no tengo experiencia" not in answer.lower():
+                                answers_list.append({"skill": skill, "answer": answer})
+                        
+                        if answers_list:
                             try:
-                                classification = json.loads(classifier_text)
-                                
-                                if classification["classification"] == "EXPERIENCIA_LABORAL":
-                                    experience_enrichments.append({
-                                        "skill": skill_name,
-                                        "company": classification.get("company_name"),
-                                        "description": classification.get("description")
-                                    })
-                                    logger.info(f"{skill_name} clasificado como EXPERIENCIA_LABORAL en {classification.get('company_name')}")
-                                
-                                elif classification["classification"] in ["PROYECTO_ACADEMICO", "PROYECTO_PERSONAL"]:
-                                    projects_to_create.append({
-                                        "skill": skill_name,
-                                        "project_name": classification.get("project_name"),
-                                        "project_type": classification["classification"],
-                                        "description": classification.get("description")
-                                    })
-                                    logger.info(f"{skill_name} clasificado como {classification['classification']}: {classification.get('project_name')}")
-                            
-                            except json.JSONDecodeError as e:
-                                logger.warning(f"Error al parsear clasificación para {skill_name}: {e}")
-                                continue
-                
-                # 2.1 Enriquecer Experiencia Laboral
-                if experience_enrichments and structured_data.get("experience"):
-                    with st.spinner("✍️ Enriqueciendo experiencia laboral..."):
-                        logger.info("Enriqueciendo experiencia laboral...")
-                        
-                        # Agrupar enriquecimientos por empresa
-                        enrichments_by_company = {}
-                        for enrichment in experience_enrichments:
-                            company = enrichment["company"]
-                            if company not in enrichments_by_company:
-                                enrichments_by_company[company] = []
-                            enrichments_by_company[company].append(enrichment)
-                        
-                        # Obtener keywords de la vacante
-                        job_keywords = [s.name for s in gap_result.job_requirements.get_must_haves()]
-                        
-                        # Enriquecer cada experiencia que tenga enriquecimientos
-                        for exp in structured_data["experience"]:
-                            company_name = exp.get("company", "")
-                            
-                            # Si esta empresa tiene enriquecimientos
-                            if company_name in enrichments_by_company:
-                                # Construir highlights actuales
-                                current_highlights = "\n".join([f"- {h}" for h in exp.get("highlights", [])])
-                                
-                                # Construir skills a agregar
-                                skills_to_add = "\n".join([
-                                    f"- {e['skill']}: {e['description']}"
-                                    for e in enrichments_by_company[company_name]
-                                ])
-                                
-                                # Generar prompt de enriquecimiento
-                                enrichment_prompt = PromptManager.get_experience_enrichment_prompt(
-                                    position=exp.get("position", ""),
-                                    company=company_name,
-                                    duration=f"{exp.get('start_date', '')} - {exp.get('end_date', '')}",
-                                    current_highlights=current_highlights,
-                                    user_confirmed_skills=skills_to_add,
-                                    job_keywords=job_keywords,
-                                    language=language_name
+                                # Llamada BATCH única a la IA
+                                classifier_prompt = PromptManager.get_batch_user_response_classifier_prompt(
+                                    user_answers_list=answers_list,
+                                    known_companies=known_companies
                                 )
                                 
-                                # Llamar a la IA para enriquecer
-                                enrichment_response = gemini_client.generate(enrichment_prompt)
-                                enriched_text = enrichment_response.text.strip()
+                                classifier_response = gemini_client.generate(classifier_prompt)
+                                classifier_text = classifier_response.text.strip()
                                 
-                                # Limpiar y convertir a lista
-                                enriched_highlights = [
-                                    line.strip().lstrip("-").lstrip("•").lstrip("*").strip()
-                                    for line in enriched_text.split("\n")
-                                    if line.strip() and not line.strip().startswith("#")
-                                ]
+                                # Limpiar JSON
+                                if "```json" in classifier_text:
+                                    classifier_text = classifier_text.split("```json")[1].split("```")[0].strip()
+                                elif "```" in classifier_text:
+                                    classifier_text = classifier_text.split("```")[1].split("```")[0].strip()
                                 
-                                # Actualizar highlights
-                                exp["highlights"] = enriched_highlights
-                                logger.info(f"Experiencia enriquecida en {company_name}: {len(enriched_highlights)} highlights")
+                                classifications = json.loads(classifier_text)
+                                
+                                # Procesar clasificaciones
+                                for classification in classifications:
+                                    skill_name = classification.get("skill")
+                                    
+                                    if classification["classification"] == "EXPERIENCIA_LABORAL":
+                                        experience_enrichments.append({
+                                            "skill": skill_name,
+                                            "company": classification.get("company_name"),
+                                            "description": classification.get("description")
+                                        })
+                                        logger.info(f"{skill_name} clasificado como EXPERIENCIA_LABORAL en {classification.get('company_name')}")
+                                    
+                                    elif classification["classification"] in ["PROYECTO_ACADEMICO", "PROYECTO_PERSONAL"]:
+                                        projects_to_create.append({
+                                            "skill": skill_name,
+                                            "project_name": classification.get("project_name"),
+                                            "project_type": classification["classification"],
+                                            "description": classification.get("description")
+                                        })
+                                        logger.info(f"{skill_name} clasificado como {classification['classification']}: {classification.get('project_name')}")
+                                        
+                            except Exception as e:
+                                logger.error(f"Error en clasificación batch: {e}")
+                                # Fallback (podría implementarse lógica individual aquí si falla el batch)
                 
-                # 2.2 Crear Sección de Proyectos
-                if projects_to_create:
-                    with st.spinner("🚀 Generando sección de proyectos..."):
-                        logger.info("Generando sección de proyectos...")
+                # EJECUCIÓN PARALELA DE GENERACIÓN DE CONTENIDO
+                with st.spinner("🚀 Generando contenido enriquecido en paralelo..."):
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        futures = {}
                         
-                        projects = []
-                        for project_data in projects_to_create:
-                            # Generar entrada de proyecto
-                            project_prompt = PromptManager.get_project_entry_generation_prompt(
-                                project_name=project_data["project_name"],
-                                project_type="académico" if "ACADEMICO" in project_data["project_type"] else "personal",
-                                main_skill=project_data["skill"],
-                                user_description=project_data["description"],
-                                language=language_name
-                            )
+                        # 1. Tareas de Enriquecimiento de Experiencia
+                        enrichment_tasks = []
+                        if experience_enrichments and structured_data.get("experience"):
+                            # Agrupar enriquecimientos por empresa
+                            enrichments_by_company = {}
+                            for enrichment in experience_enrichments:
+                                company = enrichment["company"]
+                                if company not in enrichments_by_company:
+                                    enrichments_by_company[company] = []
+                                enrichments_by_company[company].append(enrichment)
                             
-                            project_response = gemini_client.generate(project_prompt)
-                            project_text = project_response.text.strip()
+                            # Obtener keywords de la vacante
+                            job_keywords = [s.name for s in gap_result.job_requirements.get_must_haves()]
                             
-                            # Limpiar JSON
-                            if "```json" in project_text:
-                                project_text = project_text.split("```json")[1].split("```")[0].strip()
-                            elif "```" in project_text:
-                                project_text = project_text.split("```")[1].split("```")[0].strip()
-                            
-                            try:
-                                project_entry = json.loads(project_text)
-                                projects.append({
-                                    "name": project_data["project_name"],
-                                    "summary": project_entry.get("summary"),
-                                    "start_date": None,
-                                    "end_date": None,
-                                    "highlights": project_entry.get("highlights", [])
-                                })
-                                logger.info(f"Proyecto creado: {project_data['project_name']}")
-                            except json.JSONDecodeError as e:
-                                logger.warning(f"Error al parsear proyecto {project_data['project_name']}: {e}")
-                        
-                        # Agregar proyectos a structured_data
-                        if projects:
-                            structured_data["projects"] = projects
-                            logger.info(f"Total de proyectos creados: {len(projects)}")
+                            for i, exp in enumerate(structured_data["experience"]):
+                                company_name = exp.get("company", "")
+                                if company_name in enrichments_by_company:
+                                    # Preparar prompt
+                                    current_highlights = "\n".join([f"- {h}" for h in exp.get("highlights", [])])
+                                    skills_to_add = "\n".join([
+                                        f"- {e['skill']}: {e['description']}"
+                                        for e in enrichments_by_company[company_name]
+                                    ])
+                                    
+                                    prompt = PromptManager.get_experience_enrichment_prompt(
+                                        position=exp.get("position", ""),
+                                        company=company_name,
+                                        duration=f"{exp.get('start_date', '')} - {exp.get('end_date', '')}",
+                                        current_highlights=current_highlights,
+                                        user_confirmed_skills=skills_to_add,
+                                        job_keywords=job_keywords,
+                                        language=language_name
+                                    )
+                                    
+                                    # Submit task
+                                    future = executor.submit(gemini_client.generate, prompt)
+                                    futures[future] = {"type": "enrichment", "index": i, "company": company_name}
 
-                
-                # 2.5. Generar Resumen Profesional Enfocado al Cargo
-                with st.spinner("✍️ Generando resumen profesional enfocado al cargo..."):
-                    logger.info("Generando resumen profesional...")
-                    
-                    # Preparar datos para el resumen
-                    education_summary = ", ".join([f"{e.get('degree', 'N/A')} en {e.get('institution', 'N/A')}" for e in structured_data.get("education", [])])
-                    experience_summary = ", ".join([f"{e.get('position', 'N/A')} en {e.get('company', 'N/A')}" for e in structured_data.get("experience", [])])
-                    skills_summary = ", ".join([s.get('details', '') for s in structured_data.get("skills", [])])
-                    
-                    # Calcular años de experiencia aproximados
-                    years_exp = "2-3 años"  # Default
-                    if structured_data.get("experience"):
-                        try:
-                            # Intentar calcular años desde la primera experiencia
-                            first_exp = structured_data["experience"][0]
-                            start = first_exp.get("start_date", "2020")
-                            if start and len(start) >= 4:
-                                start_year = int(start[:4])
-                                current_year = 2026
-                                years_exp = f"{current_year - start_year} años"
-                        except:
-                            pass
-                    
-                    # Obtener must-haves del gap analysis
-                    must_haves = "\n".join([f"- {s}" for s in st.session_state.gap_analysis_result.get("must_haves", [])])
-                    
-                    # Generar resumen con IA
-                    summary_prompt = PromptManager.get_summary_generation_prompt(
-                        job_description=st.session_state.job_description,
-                        education_summary=education_summary,
-                        experience_summary=experience_summary,
-                        skills_summary=skills_summary,
-                        years_experience=years_exp,
-                        must_have_skills=must_haves,
-                        language=language_name
-                    )
-                    
-                    summary_response = gemini_client.generate(summary_prompt)
-                    generated_summary = summary_response.text.strip()
-                    
-                    # Limpiar si viene con markdown o quotes
-                    if generated_summary.startswith('"') and generated_summary.endswith('"'):
-                        generated_summary = generated_summary[1:-1]
-                    
-                    # Reemplazar el resumen en structured_data
-                    structured_data["summary"] = generated_summary
-                    logger.info(f"Resumen generado: {generated_summary[:100]}...")
-                
-                # 2.75. Priorizar Habilidades según el Cargo
-                with st.spinner("🎯 Priorizando habilidades según el cargo..."):
-                    logger.info("Priorizando habilidades...")
-                    
-                    # Preparar habilidades actuales como texto
-                    current_skills_text = json.dumps(structured_data.get("skills", []), ensure_ascii=False, indent=2)
-                    
-                    # Obtener must-haves
-                    must_haves_list = st.session_state.gap_analysis_result.get("must_haves", [])
-                    must_haves_text = ", ".join(must_haves_list)
-                    
-                    # Extraer job title de la descripción (o usar genérico)
-                    job_title = "Desarrollador Python"  # TODO: Extraer del job_description
-                    
-                    # Llamar al prompt de priorización
-                    skill_prioritization_prompt = PromptManager.get_skill_prioritization_prompt(
-                        current_skills=current_skills_text,
-                        must_have_skills=must_haves_text,
-                        job_title=job_title
-                    )
-                    
-                    prioritization_response = gemini_client.generate(skill_prioritization_prompt)
-                    prioritized_skills_text = prioritization_response.text.strip()
-                    
-                    # Limpiar JSON
-                    if "```json" in prioritized_skills_text:
-                        prioritized_skills_text = prioritized_skills_text.split("```json")[1].split("```")[0].strip()
-                    elif "```" in prioritized_skills_text:
-                        prioritized_skills_text = prioritized_skills_text.split("```")[1].split("```")[0].strip()
-                    
-                    # Parsear y reemplazar
-                    try:
-                        prioritized_skills = json.loads(prioritized_skills_text)
-                        structured_data["skills"] = prioritized_skills
-                        logger.info(f"Habilidades priorizadas: {len(prioritized_skills)} categorías")
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Error al parsear habilidades priorizadas: {e}, usando originales")
+                        # 2. Tareas de Creación de Proyectos
+                        if projects_to_create:
+                            for i, project_data in enumerate(projects_to_create):
+                                prompt = PromptManager.get_project_entry_generation_prompt(
+                                    project_name=project_data["project_name"],
+                                    project_type="académico" if "ACADEMICO" in project_data["project_type"] else "personal",
+                                    main_skill=project_data["skill"],
+                                    user_description=project_data["description"],
+                                    language=language_name
+                                )
+                                future = executor.submit(gemini_client.generate, prompt)
+                                futures[future] = {"type": "project", "data": project_data}
+
+                        # 3. Tarea de Resumen Profesional
+                        # Preparar datos
+                        education_summary = ", ".join([f"{e.get('degree', 'N/A')} en {e.get('institution', 'N/A')}" for e in structured_data.get("education", [])])
+                        experience_summary = ", ".join([f"{e.get('position', 'N/A')} en {e.get('company', 'N/A')}" for e in structured_data.get("experience", [])])
+                        skills_summary = ", ".join([s.get('details', '') for s in structured_data.get("skills", [])])
+                        
+                        years_exp = "2-3 años"
+                        if structured_data.get("experience"):
+                            try:
+                                first_exp = structured_data["experience"][0]
+                                start = first_exp.get("start_date", "2020")
+                                if start and len(start) >= 4:
+                                    years_exp = f"{2026 - int(start[:4])} años"
+                            except: pass
+                        
+                        must_haves = "\n".join([f"- {s}" for s in st.session_state.gap_analysis_result.get("must_haves", [])])
+                        
+                        summary_prompt = PromptManager.get_summary_generation_prompt(
+                            job_description=st.session_state.job_description,
+                            education_summary=education_summary,
+                            experience_summary=experience_summary,
+                            skills_summary=skills_summary,
+                            years_experience=years_exp,
+                            must_have_skills=must_haves,
+                            language=language_name
+                        )
+                        future_summary = executor.submit(gemini_client.generate, summary_prompt)
+                        futures[future_summary] = {"type": "summary"}
+
+                        # 4. Tarea de Priorización de Skills
+                        current_skills_text = json.dumps(structured_data.get("skills", []), ensure_ascii=False, indent=2)
+                        must_haves_list = st.session_state.gap_analysis_result.get("must_haves", [])
+                        must_haves_text = ", ".join(must_haves_list)
+                        job_title = "Desarrollador" # TODO: Improve extraction
+                        
+                        skill_prompt = PromptManager.get_skill_prioritization_prompt(
+                            current_skills=current_skills_text,
+                            must_have_skills=must_haves_text,
+                            job_title=job_title
+                        )
+                        future_skills = executor.submit(gemini_client.generate, skill_prompt)
+                        futures[future_skills] = {"type": "skills"}
+
+                        # PROCESAR RESULTADOS A MEDIDA QUE LLEGAN
+                        new_projects = []
+                        
+                        for future in concurrent.futures.as_completed(futures):
+                            task_info = futures[future]
+                            try:
+                                response = future.result()
+                                text = response.text.strip()
+                                
+                                # Limpiar marcadores JSON si existen
+                                if "```json" in text:
+                                    text = text.split("```json")[1].split("```")[0].strip()
+                                elif "```" in text:
+                                    text = text.split("```")[1].split("```")[0].strip()
+
+                                if task_info["type"] == "enrichment":
+                                    # Procesar texto enriquecido (bullet points)
+                                    enriched_highlights = [
+                                        line.strip().lstrip("-").lstrip("•").lstrip("*").strip()
+                                        for line in text.split("\n")
+                                        if line.strip() and not line.strip().startswith("#")
+                                    ]
+                                    structured_data["experience"][task_info["index"]]["highlights"] = enriched_highlights
+                                    logger.info(f"Experiencia enriquecida (Async): {task_info['company']}")
+
+                                elif task_info["type"] == "project":
+                                    project_entry = json.loads(text)
+                                    new_projects.append({
+                                        "name": task_info["data"]["project_name"],
+                                        "summary": project_entry.get("summary"),
+                                        "start_date": None,
+                                        "end_date": None,
+                                        "highlights": project_entry.get("highlights", [])
+                                    })
+                                    logger.info(f"Proyecto creado (Async): {task_info['data']['project_name']}")
+
+                                elif task_info["type"] == "summary":
+                                    if text.startswith('"') and text.endswith('"'):
+                                        text = text[1:-1]
+                                    structured_data["summary"] = text
+                                    logger.info("Resumen generado (Async)")
+
+                                elif task_info["type"] == "skills":
+                                    prioritized_skills = json.loads(text)
+                                    structured_data["skills"] = prioritized_skills
+                                    logger.info("Skills priorizadas (Async)")
+
+                            except Exception as e:
+                                logger.error(f"Error en tarea {task_info['type']}: {e}")
+
+                        # Agregar proyectos generados
+                        if new_projects:
+                            structured_data["projects"] = new_projects
                         
                 # 3. Generar YAML
                 with st.spinner("📄 Generando archivo YAML..."):

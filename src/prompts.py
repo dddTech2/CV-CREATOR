@@ -76,7 +76,39 @@ IMPORTANTE:
 
 **Genera las preguntas numeradas (1. 2. 3. ...):**"""
 
-    # 3. Clasificación de Respuestas del Usuario
+    # 3. Clasificación de Respuestas del Usuario (BATCH)
+    BATCH_USER_RESPONSE_CLASSIFIER = """Eres un experto analizando respuestas de usuarios sobre su experiencia. Tu tarea es CLASIFICAR múltiples respuestas en categorías específicas.
+
+**Empresas conocidas del CV del usuario:**
+{known_companies}
+
+**Respuestas a clasificar:**
+{user_answers_json}
+
+**INSTRUCCIONES:**
+Analiza cada respuesta y clasifica en UNA de estas categorías:
+1. **EXPERIENCIA_LABORAL:** Si menciona que usó la skill en una empresa/trabajo
+2. **PROYECTO_ACADEMICO:** Si menciona universidad, curso, tesis, proyecto académico
+3. **PROYECTO_PERSONAL:** Si menciona proyecto personal, freelance, independiente
+4. **NO_APLICABLE:** Si dice que NO tiene experiencia o respuesta muy vaga
+
+**FORMATO DE SALIDA (JSON estricto - Lista de Objetos):**
+[
+    {{
+        "skill": "nombre de la skill",
+        "classification": "EXPERIENCIA_LABORAL" | "PROYECTO_ACADEMICO" | "PROYECTO_PERSONAL" | "NO_APLICABLE",
+        "company_name": "nombre empresa" o null,
+        "project_name": "nombre proyecto extraído del contexto" o "Proyecto con {{skill_name}}" si es genérico,
+        "description": "descripción limpia de lo que hizo con la skill",
+        "confidence": "high" | "medium" | "low"
+    }},
+    ...
+]
+
+**Ahora clasifica estas respuestas (SOLO JSON, sin explicaciones):**
+"""
+
+    # 3. Clasificación de Respuestas del Usuario (LEGACY - SINGLE)
     USER_RESPONSE_CLASSIFIER = """Eres un experto analizando respuestas de usuarios sobre su experiencia. Tu tarea es CLASIFICAR cada respuesta en categorías específicas.
 
 **Skill preguntada:** {skill_name}
@@ -591,6 +623,21 @@ class PromptManager:
             job_summary=job_summary,
             max_questions=max_questions,
             language=language,
+        )
+
+    @staticmethod
+    def get_batch_user_response_classifier_prompt(
+        user_answers_list: list[dict],
+        known_companies: list[str]
+    ) -> str:
+        """Construye el prompt para clasificar múltiples respuestas del usuario en lote."""
+        import json
+        companies_text = ", ".join(known_companies) if known_companies else "Ninguna empresa conocida"
+        answers_json = json.dumps(user_answers_list, ensure_ascii=False, indent=2)
+        
+        return PromptTemplates.BATCH_USER_RESPONSE_CLASSIFIER.format(
+            user_answers_json=answers_json,
+            known_companies=companies_text
         )
 
     @staticmethod

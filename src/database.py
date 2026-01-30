@@ -10,9 +10,13 @@ logger = get_logger(__name__)
 
 
 class CVDatabase:
+    _initialized = False
+
     def __init__(self, db_path: str = "data/cv_history.db"):
         self.db_path = db_path
-        self._init_db()
+        if not CVDatabase._initialized:
+            self._init_db()
+            CVDatabase._initialized = True
 
     def _init_db(self):
         """Inicializa la base de datos y crea la tabla si no existe."""
@@ -38,6 +42,24 @@ class CVDatabase:
                     job_description TEXT,
                     gap_analysis TEXT,
                     questions_asked TEXT
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS skill_memory (
+                    skill_name TEXT PRIMARY KEY,
+                    answer_text TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    usage_count INTEGER DEFAULT 1
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS base_cv (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    cv_text TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
@@ -188,3 +210,112 @@ class CVDatabase:
         conn.close()
 
         return affected
+
+    def save_skill_answer(self, skill_name: str, answer_text: str) -> None:
+        """
+        Guarda o actualiza una respuesta de habilidad en la memoria.
+        
+        Args:
+            skill_name: Nombre de la habilidad (se normalizará a minúsculas)
+            answer_text: Texto de la respuesta
+        """
+        try:
+            normalized_skill = skill_name.strip().lower()
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Usar UPSERT (INSERT OR REPLACE)
+            cursor.execute("""
+                INSERT INTO skill_memory (skill_name, answer_text, updated_at, usage_count)
+                VALUES (?, ?, CURRENT_TIMESTAMP, 1)
+                ON CONFLICT(skill_name) DO UPDATE SET
+                    answer_text = excluded.answer_text,
+                    updated_at = CURRENT_TIMESTAMP,
+                    usage_count = skill_memory.usage_count + 1
+            """, (normalized_skill, answer_text))
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"Respuesta guardada para skill: {normalized_skill}")
+            
+        except Exception as e:
+            logger.error(f"Error guardando skill answer: {e}", exc_info=True)
+            # No lanzar excepción para no interrumpir el flujo principal
+
+    def get_skill_answer(self, skill_name: str) -> str | None:
+        """
+        Recupera una respuesta previa para una habilidad.
+        
+        Args:
+            skill_name: Nombre de la habilidad
+            
+        Returns:
+            Texto de la respuesta o None si no existe
+        """
+        try:
+            normalized_skill = skill_name.strip().lower()
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT answer_text FROM skill_memory WHERE skill_name = ?", (normalized_skill,))
+            row = cursor.fetchone()
+            
+            conn.close()
+            
+            return row[0] if row else None
+            
+        except Exception as e:
+            logger.error(f"Error recuperando skill answer: {e}", exc_info=True)
+            return None
+
+    def save_base_cv(self, cv_text: str) -> None:
+        """
+        Guarda o actualiza el CV base predeterminado (Singleton record).
+        
+        Args:
+            cv_text: El texto del CV a guardar como base.
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Usar UPSERT para mantener solo un registro con id=1
+            cursor.execute("""
+                INSERT INTO base_cv (id, cv_text, updated_at)
+                VALUES (1, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    cv_text = excluded.cv_text,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (cv_text,))
+            
+            conn.commit()
+            conn.close()
+            logger.info("CV Base guardado exitosamente")
+            
+        except Exception as e:
+            logger.error(f"Error guardando CV Base: {e}", exc_info=True)
+            raise
+
+    def get_base_cv(self) -> str | None:
+        """
+        Recupera el CV base predeterminado si existe.
+        
+        Returns:
+            Texto del CV base o None.
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT cv_text FROM base_cv WHERE id = 1")
+            row = cursor.fetchone()
+            
+            conn.close()
+            
+            return row[0] if row else None
+            
+        except Exception as e:
+            logger.error(f"Error recuperando CV Base: {e}", exc_info=True)
+            return None

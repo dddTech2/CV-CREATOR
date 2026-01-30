@@ -102,10 +102,20 @@ def test_database_initialization(temp_db):
         WHERE type='table' AND name='cv_history'
     """)
     result = cursor.fetchone()
-    conn.close()
 
     assert result is not None
     assert result[0] == "cv_history"
+    
+    # Verificar que la tabla skill_memory existe
+    cursor.execute("""
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name='skill_memory'
+    """)
+    result_skills = cursor.fetchone()
+    conn.close()
+
+    assert result_skills is not None
+    assert result_skills[0] == "skill_memory"
 
 
 def test_database_creates_parent_directory(tmp_path):
@@ -597,3 +607,46 @@ def test_search_in_large_dataset(cv_database):
 
     assert cv is not None
     assert cv["job_title"] == "Job 25"
+
+
+# ==================== Tests de Skill Memory ====================
+
+def test_save_skill_answer_new(cv_database):
+    """Test guardar una nueva respuesta de skill."""
+    skill = "Python"
+    answer = "Tengo 5 años de experiencia."
+    
+    cv_database.save_skill_answer(skill, answer)
+    
+    saved_answer = cv_database.get_skill_answer(skill)
+    assert saved_answer == answer
+
+def test_save_skill_answer_update(cv_database):
+    """Test actualizar una respuesta existente (Upsert)."""
+    skill = "Docker"
+    
+    # Primera respuesta
+    cv_database.save_skill_answer(skill, "Respuesta v1")
+    assert cv_database.get_skill_answer(skill) == "Respuesta v1"
+    
+    # Actualización
+    cv_database.save_skill_answer(skill, "Respuesta v2 mejorada")
+    assert cv_database.get_skill_answer(skill) == "Respuesta v2 mejorada"
+
+def test_skill_normalization(cv_database):
+    """Test que las skills se normalizan (lowercase/strip)."""
+    # Guardar con mayúsculas y espacios
+    cv_database.save_skill_answer("  React JS  ", "Experiencia en frontend")
+    
+    # Recuperar con minúsculas
+    answer = cv_database.get_skill_answer("react js")
+    assert answer == "Experiencia en frontend"
+    
+    # Recuperar con original (también debe funcionar porque se normaliza en el input)
+    answer2 = cv_database.get_skill_answer("  React JS  ")
+    assert answer2 == "Experiencia en frontend"
+
+def test_get_skill_answer_not_exists(cv_database):
+    """Test recuperar skill que no existe."""
+    answer = cv_database.get_skill_answer("NonExistentSkill")
+    assert answer is None
