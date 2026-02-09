@@ -302,6 +302,35 @@ class CVDatabase:
             logger.error(f"Error recuperando todas las skill answers: {e}", exc_info=True)
             return {}
 
+    def delete_skill_answer(self, skill_name: str) -> bool:
+        """
+        Elimina una respuesta de habilidad de la memoria.
+        
+        Args:
+            skill_name: Nombre de la habilidad a eliminar
+            
+        Returns:
+            True si se eliminó, False si no existía o error
+        """
+        try:
+            normalized_skill = skill_name.strip().lower()
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM skill_memory WHERE skill_name = ?", (normalized_skill,))
+            affected = cursor.rowcount
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Skill eliminada de memoria: {normalized_skill}")
+            return affected > 0
+            
+        except Exception as e:
+            logger.error(f"Error eliminando skill answer: {e}", exc_info=True)
+            return False
+
     def save_base_cv(self, cv_text: str) -> None:
         """
         Guarda o actualiza el CV base predeterminado (Singleton record).

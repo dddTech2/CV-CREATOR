@@ -125,16 +125,27 @@ progress_value = (st.session_state.current_step + 1) / len(steps_names)
 # Mostrar barra de progreso
 st.progress(progress_value)
 
-# Mostrar paso actual con emojis de completado
+# Mostrar paso actual con emojis de completado y permitir navegación
 progress_cols = st.columns(len(steps_names))
 for idx, step_name in enumerate(steps_names):
     with progress_cols[idx]:
+        # Determinar etiqueta y estilo
         if idx < st.session_state.current_step:
-            st.markdown(f"✅ **{step_name}**")
+            label = f"✅ {step_name}"
+            type_btn = "secondary"
         elif idx == st.session_state.current_step:
-            st.markdown(f"🔵 **{step_name}**")
+            label = f"🔵 {step_name}"
+            type_btn = "primary"
         else:
-            st.markdown(f"⚪ {step_name}")
+            label = f"⚪ {step_name}"
+            type_btn = "secondary"
+        
+        # Usar botones para navegación
+        # Permitimos navegar a pasos anteriores o si ya se completó el flujo (ej. carga de CV)
+        # O simplemente permitimos navegación libre (usuario pide "habilita la opción")
+        if st.button(label, key=f"nav_step_{idx}", use_container_width=True, type=type_btn):
+            st.session_state.current_step = idx
+            st.rerun()
 
 st.divider()
 
@@ -204,11 +215,60 @@ with st.sidebar:
                             st.session_state.job_description = full_cv.get('job_description') or st.session_state.job_description
                             
                             st.toast(f"✅ CV cargado: {cv_item['job_title']}")
-                            st.info("Ve al tab '✅ Resultado' para ver el CV cargado")
+                            # Navegar automáticamente al resultado
+                            st.session_state.current_step = 3
+                            st.rerun()
                 
                 with col_b:
                     if st.button("❌ Borrar", key=f"del_{cv_item['id']}", type="secondary", use_container_width=True):
                         db.delete_cv(cv_item['id'])
+                        st.rerun()
+
+    st.divider()
+
+    # NUEVA SECCIÓN: Memoria de Habilidades
+    with st.expander("🧠 Memoria de Habilidades"):
+        st.info("Aquí puedes ver y editar lo que la IA ha aprendido de ti.")
+        
+        # Cargar skills guardadas
+        try:
+            saved_skills = db.get_all_skill_answers() # Retorna dict {skill: answer}
+        except Exception as e:
+            st.error(f"Error cargando skills: {e}")
+            saved_skills = {}
+            
+        if not saved_skills:
+            st.caption("No hay habilidades guardadas aún.")
+        else:
+            # Selector de skill
+            skill_list = list(saved_skills.keys())
+            selected_skill = st.selectbox("Selecciona una habilidad:", skill_list)
+            
+            if selected_skill:
+                current_answer = saved_skills[selected_skill]
+                
+                # Editor
+                new_answer = st.text_area(
+                    f"Tu experiencia con {selected_skill}:",
+                    value=current_answer,
+                    height=150,
+                    key=f"edit_skill_{selected_skill}"
+                )
+                
+                col_save, col_del = st.columns(2)
+                
+                with col_save:
+                    if st.button("💾 Guardar", key=f"save_skill_{selected_skill}", use_container_width=True):
+                        db.save_skill_answer(selected_skill, new_answer)
+                        st.success("✅ Actualizado!")
+                        time.sleep(0.5)
+                        st.rerun()
+                        
+                with col_del:
+                    if st.button("🗑️ Borrar", key=f"del_skill_{selected_skill}", type="secondary", use_container_width=True):
+                        db.delete_skill_answer(selected_skill)
+                        st.warning(f"❌ {selected_skill} eliminado de memoria.")
+                        time.sleep(0.5)
                         st.rerun()
 
     st.divider()
