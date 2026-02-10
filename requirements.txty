@@ -2,7 +2,7 @@
 streamlit>=1.31.0
 google-genai>=0.1.0
 python-dotenv>=1.0.0
-rendercv[full]>=2.6
+rendercv[full]
 pyyaml>=6.0
 
 # PDF parsing
