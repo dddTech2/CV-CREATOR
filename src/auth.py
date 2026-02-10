@@ -249,3 +249,41 @@ class AuthManager:
         except Exception as e:
             logger.error(f"Error obteniendo perfil: {e}")
             return None
+
+    def get_all_profiles(self) -> list[dict[str, Any]]:
+        """Obtiene todos los perfiles de usuarios (para admin).
+
+        Returns:
+            Lista de diccionarios con datos de perfil.
+        """
+        try:
+            response = (
+                self.client.table("user_profiles")
+                .select("*")
+                .order("created_at", desc=True)
+                .execute()
+            )
+            return response.data  # type: ignore[return-value]
+        except Exception as e:
+            logger.error(f"Error obteniendo perfiles: {e}")
+            return []
+
+    def set_user_active(self, user_id: str, is_active: bool) -> bool:
+        """Cambia el estado is_active de un usuario.
+
+        Args:
+            user_id: UUID del usuario.
+            is_active: True para activar, False para desactivar.
+
+        Returns:
+            True si la operacion fue exitosa.
+        """
+        try:
+            self.client.table("user_profiles").update({"is_active": is_active}).eq(
+                "id", user_id
+            ).execute()
+            logger.info(f"Usuario {user_id} {'activado' if is_active else 'desactivado'}")
+            return True
+        except Exception as e:
+            logger.error(f"Error cambiando estado de usuario: {e}")
+            return False

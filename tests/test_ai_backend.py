@@ -1,6 +1,7 @@
 """
 Tests unitarios para el cliente de Gemini AI (usando nueva API google.genai).
 """
+
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from src.ai_backend import (
@@ -26,7 +27,7 @@ class TestGeminiClient:
         client = GeminiClient()
 
         assert client.api_key == "test_key"
-        assert client.model_name == "gemini-2.0-flash-exp"
+        assert client.model_name == "gemini-3-flash-preview"
         mock_client_class.assert_called_once_with(api_key="test_key")
 
     @patch("src.ai_backend.genai.Client")

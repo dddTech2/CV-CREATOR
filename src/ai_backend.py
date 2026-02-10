@@ -1,6 +1,7 @@
 """
 Backend de IA: Cliente Gemini y Estratega de Carrera.
 """
+
 import os
 import time
 from dataclasses import dataclass
@@ -27,6 +28,8 @@ class GeminiResponse:
     success: bool
     error: Optional[str] = None
     model_used: Optional[str] = None
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 class GeminiClientError(Exception):
@@ -90,6 +93,9 @@ class GeminiClient:
         self.temperature = temperature
         self.max_output_tokens = max_output_tokens
 
+        # Acumulador de tokens para tracking
+        self._usage_log: list[tuple[int, int]] = []
+
         # Configurar cliente con nueva API
         try:
             self.client = genai.Client(api_key=self.api_key)
@@ -124,8 +130,8 @@ class GeminiClient:
 
         for attempt in range(self.MAX_RETRIES if retry else 1):
             try:
-                logger.debug(f"Generando contenido (intento {attempt+1})")
-                
+                logger.debug(f"Generando contenido (intento {attempt + 1})")
+
                 # Configuración de generación
                 config = GenerateContentConfig(
                     temperature=self.temperature,
@@ -144,14 +150,37 @@ class GeminiClient:
                         text="", success=False, error="Respuesta vacía del modelo"
                     )
 
+                # Extraer usage_metadata (tokens consumidos)
+                in_tokens = 0
+                out_tokens = 0
+                try:
+                    if hasattr(response, "usage_metadata") and response.usage_metadata:
+                        in_tokens = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+                        out_tokens = (
+                            getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+                        )
+                        logger.debug(f"Tokens: input={in_tokens}, output={out_tokens}")
+                    else:
+                        logger.warning("usage_metadata no disponible en la respuesta")
+                except Exception as meta_err:
+                    logger.warning(f"Error leyendo usage_metadata: {meta_err}")
+
                 logger.info("Contenido generado exitosamente")
-                return GeminiResponse(
-                    text=response.text, success=True, model_used=self.model_name
+                result = GeminiResponse(
+                    text=response.text,
+                    success=True,
+                    model_used=self.model_name,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
                 )
+                # Acumular tokens para tracking
+                if in_tokens or out_tokens:
+                    self._usage_log.append((in_tokens, out_tokens))
+                return result
 
             except Exception as e:
                 error_msg = str(e).lower()
-                logger.warning(f"Error en intento {attempt+1}: {e}")
+                logger.warning(f"Error en intento {attempt + 1}: {e}")
 
                 # Detectar rate limit
                 if "quota" in error_msg or "rate" in error_msg or "429" in error_msg:
@@ -165,9 +194,7 @@ class GeminiClient:
 
                 # Otros errores de conexión
                 elif "connection" in error_msg or "timeout" in error_msg:
-                    last_error = GeminiConnectionError(
-                        f"Error de conexión: {str(e)}"
-                    )
+                    last_error = GeminiConnectionError(f"Error de conexión: {str(e)}")
 
                     if retry and attempt < self.MAX_RETRIES - 1:
                         logger.info(f"Error de conexión. Reintentando en {self.RETRY_DELAY}s...")
@@ -199,6 +226,17 @@ class GeminiClient:
         """
         response = self.generate(prompt)
         return response.text if response.success else ""
+
+    def drain_usage(self) -> tuple[int, int]:
+        """Devuelve y resetea los tokens acumulados.
+
+        Returns:
+            Tupla (total_input_tokens, total_output_tokens).
+        """
+        total_in = sum(i for i, _ in self._usage_log)
+        total_out = sum(o for _, o in self._usage_log)
+        self._usage_log.clear()
+        return total_in, total_out
 
     def test_connection(self) -> bool:
         """

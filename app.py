@@ -34,6 +34,7 @@ from src.ai_backend import GeminiClient
 from src.prompts import PromptManager
 from src.ai_proxy import InterviewProxy
 from src.auth import AuthManager
+from src.token_tracker import TokenTracker, USER_LIMIT_COP as TOKEN_TRACKER_LIMIT
 
 # Configuración de la página
 st.set_page_config(
@@ -174,6 +175,35 @@ def _get_user_id() -> str:
     return st.session_state.auth_user["id"]
 
 
+def _is_user_blocked() -> bool:
+    """Verifica si el usuario excedio su limite de tokens."""
+    try:
+        tracker = TokenTracker()
+        return tracker.is_user_blocked(_get_user_id())
+    except Exception as e:
+        logger.error(f"Error verificando limite de tokens: {e}")
+        return False  # Ante error, permitir uso
+
+
+def _record_token_usage(
+    gemini_client: GeminiClient, operation: str, cv_id: int | None = None
+) -> None:
+    """Drena los tokens acumulados del GeminiClient y los registra en token_usage."""
+    try:
+        total_in, total_out = gemini_client.drain_usage()
+        if total_in or total_out:
+            tracker = TokenTracker()
+            tracker.record_usage(
+                user_id=_get_user_id(),
+                operation=operation,
+                input_tokens=total_in,
+                output_tokens=total_out,
+                cv_id=cv_id,
+            )
+    except Exception as e:
+        logger.error(f"Error registrando token usage ({operation}): {e}")
+
+
 # Inicializar session_state
 if "cv_text" not in st.session_state:
     st.session_state.cv_text = ""
@@ -309,6 +339,54 @@ with st.sidebar:
                 del st.session_state[key]
         st.rerun()
     st.divider()
+
+    # --- Consumo de tokens ---
+    try:
+        _tracker = TokenTracker()
+        _user_total_cost = _tracker.get_user_total_cost(_get_user_id())
+        _user_remaining = _tracker.get_user_remaining(_get_user_id())
+        _usage_pct = (
+            min(_user_total_cost / TOKEN_TRACKER_LIMIT * 100, 100) if TOKEN_TRACKER_LIMIT > 0 else 0
+        )
+
+        st.subheader("💰 Consumo IA")
+        st.progress(
+            min(_usage_pct / 100, 1.0),
+            text=f"${_user_total_cost:,.1f} / ${TOKEN_TRACKER_LIMIT:,.0f} COP",
+        )
+        if _user_remaining <= 0:
+            st.error("🚫 Limite alcanzado")
+        elif _usage_pct >= 80:
+            st.warning(f"⚠️ Quedan ${_user_remaining:,.1f} COP")
+        else:
+            st.caption(f"Restante: ${_user_remaining:,.1f} COP")
+
+        with st.expander("📊 Detalle por CV"):
+            _cv_summaries = _tracker.get_usage_summary_by_cv(_get_user_id())
+            if _cv_summaries:
+                for _s in _cv_summaries:
+                    st.caption(
+                        f"**{_s.job_title}** — {_s.operations_count} ops, "
+                        f"${_s.total_cost_cop:,.2f} COP"
+                    )
+            else:
+                st.caption("Sin consumo registrado.")
+
+        with st.expander("📜 Ultimas operaciones"):
+            _recent = _tracker.get_usage_history(_get_user_id(), limit=10)
+            if _recent:
+                for _r in _recent:
+                    _date_label = _r.created_at[:16] if _r.created_at else "N/A"
+                    st.caption(
+                        f"`{_r.operation}` — in:{_r.input_tokens} out:{_r.output_tokens} "
+                        f"${_r.total_cost_cop:,.4f} COP ({_date_label})"
+                    )
+            else:
+                st.caption("Sin historial.")
+
+        st.divider()
+    except Exception as _tk_err:
+        logger.debug(f"Token tracker sidebar no disponible: {_tk_err}")
 
     st.header("Navegación Rápida")
     if st.button("🤖 Asistente de Entrevista", type="primary", use_container_width=True):
@@ -506,7 +584,7 @@ if st.session_state.current_step == 0:
                 if len(st.session_state.cv_text.strip()) > 50:
                     try:
                         db = CVDatabase()
-                        db.save_base_cv(st.session_state.cv_text)
+                        db.save_base_cv(st.session_state.cv_text, user_id=_get_user_id())
                         st.success("✅ CV Base actualizado correctamente")
                         time.sleep(1)
                         st.rerun()
@@ -576,7 +654,7 @@ if st.session_state.current_step == 0:
                         if len(st.session_state.cv_text.strip()) > 50:
                             try:
                                 db = CVDatabase()
-                                db.save_base_cv(st.session_state.cv_text)
+                                db.save_base_cv(st.session_state.cv_text, user_id=_get_user_id())
                                 st.success("✅ CV Base actualizado correctamente")
                                 time.sleep(1)
                                 st.rerun()
@@ -673,6 +751,11 @@ elif st.session_state.current_step == 1:
             st.info("💡 Agrega tu API key de Gemini en el archivo `.env`")
             st.stop()
 
+        # Verificar limite de tokens antes de ejecutar IA
+        if _is_user_blocked():
+            st.error("🚫 Has alcanzado tu limite de uso de IA. Contacta al administrador.")
+            st.stop()
+
         with st.spinner("🤖 Analizando tu CV vs. la vacante con Gemini AI..."):
             try:
                 # Crear cliente de Gemini
@@ -686,6 +769,9 @@ elif st.session_state.current_step == 1:
                     cv_text=st.session_state.cv_text,
                     job_description=st.session_state.job_description,
                 )
+
+                # Registrar tokens consumidos
+                _record_token_usage(gemini_client, "gap_analysis")
 
                 # Extraer datos para la UI
                 must_haves_list = [s.name for s in gap_result.job_requirements.get_must_haves()]
@@ -881,6 +967,11 @@ elif st.session_state.current_step == 2:
     else:
         # Generar preguntas si es la primera vez y no hay historial
         if not st.session_state.generated_questions and not st.session_state.questions_completed:
+            # Verificar limite de tokens
+            if _is_user_blocked():
+                st.error("🚫 Has alcanzado tu limite de uso de IA. Contacta al administrador.")
+                st.stop()
+
             with st.spinner("🤖 Generando preguntas estratégicas..."):
                 try:
                     # Configurar idioma
@@ -907,6 +998,9 @@ elif st.session_state.current_step == 2:
                     questions = question_gen.generate_questions(
                         gap_result, max_questions=5, prioritize_critical=True
                     )
+
+                    # Registrar tokens consumidos
+                    _record_token_usage(gemini_client, "question_generation")
 
                     st.session_state.generated_questions = questions
 
@@ -1085,6 +1179,11 @@ elif st.session_state.current_step == 3:
                 st.rerun()
 
         if not st.session_state.yaml_generated:
+            # Verificar limite de tokens
+            if _is_user_blocked():
+                st.error("🚫 Has alcanzado tu limite de uso de IA. Contacta al administrador.")
+                st.stop()
+
             # AUTO-GENERACIÓN
             try:
                 logger.info("Iniciando generación automática de CV (Tab 4)")
@@ -1401,6 +1500,9 @@ elif st.session_state.current_step == 3:
                         if new_projects:
                             structured_data["projects"] = new_projects
 
+                # Registrar tokens consumidos (todas las llamadas IA acumuladas)
+                _record_token_usage(gemini_client, "cv_generation")
+
                 # 3. Generar YAML
                 with st.spinner("📄 Generando archivo YAML..."):
                     logger.info("Generando YAML...")
@@ -1594,6 +1696,8 @@ elif st.session_state.current_step == 4:
             if st.button("✨ Generar Respuesta", type="primary", use_container_width=True):
                 if not question_input.strip():
                     st.error("Por favor escribe una pregunta.")
+                elif _is_user_blocked():
+                    st.error("🚫 Has alcanzado tu limite de uso de IA. Contacta al administrador.")
                 else:
                     with st.spinner("🧠 Pensando como tú..."):
                         try:
@@ -1609,6 +1713,9 @@ elif st.session_state.current_step == 4:
                                 job_description=st.session_state.job_description,
                                 tone=selected_tone,
                             )
+
+                            # Registrar tokens consumidos
+                            _record_token_usage(gemini_client, "interview_answer")
 
                             # Mostrar respuesta
                             st.session_state.last_generated_answer = answer
