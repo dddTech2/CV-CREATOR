@@ -8,8 +8,8 @@ pyyaml>=6.0
 # PDF parsing
 pypdf2>=3.0.0
 
-# Database
-sqlalchemy>=2.0.0
+# Database (Supabase PostgreSQL)
+supabase>=2.0.0
 
 # Validation
 jsonschema>=4.20.0

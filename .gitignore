@@ -12,10 +12,8 @@ ENV/
 # Environment
 .env
 
-# Database
-*.db
-*.sqlite3
-data/*.db
+# Supabase
+supabase/.temp/
 
 # RenderCV outputs
 rendercv_output/
